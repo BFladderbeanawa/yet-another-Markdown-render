@@ -234,6 +234,8 @@ onBeforeUnmount(()=>{
       background-color: transparent;
       border-radius: 0;
       white-space: pre;
+      text-align: left;
+      display: block;
     }
   }
 

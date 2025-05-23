@@ -1,33 +1,35 @@
 <template>
   <div class="markdown-renderer-container" ref="containerRef">
-    <DynamicScrollerItem
+    <DynamicScroller
       :items="processedBlocks"
       :min-item-size="50"
       class="scroller"
       key-field="id"
-      v-if="processedBlocks.length>0">
-      <template v-slot="{item, index, active}">
+      v-if="processedBlocks.length > 0"
+    >
+      <template v-slot="{ item, index, active }">
         <DynamicScrollerItem
           :item="item"
           :active="active"
-          size-dependencies="[item.html]"
+          :size-dependencies="[item.html]"
           :data-index="index"
         >
+          <!-- eslint-disable-next-line vue/no-v-html -->
           <div class="markdown-block" v-html="item.html"></div>
         </DynamicScrollerItem>
       </template>
       <template #before>
-        <div class="scroller-padding"></div> 
+        <div class="scroller-padding"></div>
       </template>
       <template #after>
         <div class="scroller-padding"></div>
       </template>
-    </DynamicScrollerItem>
+    </DynamicScroller>
     <div v-else-if="isLoading" class="loading-placeholder">
       Loading Markdown...
     </div>
     <div v-else class="empty-placeholder">
-      No Markdown content available.
+      No Markdown content.
     </div>
   </div>
 </template>
@@ -50,79 +52,89 @@ const props = defineProps({
 });
 const rawBlocks = ref([]);
 const isLoading = ref(true);
-let MarkdownWorker = null;
+let markdownWorker = null;
 const setupWorker = () => {
-  if(props.useWorker&&window.Worker){
-    MarkdownWorker = new Worker('/markdown.worker.js');
-    MarkdownWorker.onmessage = (e) => {
-      const {id, html, originalId, type, blocks}=e.data;
-      if(type==='blocks_splitted'){
-        rawBlocks.value=blocks;
-        isLoading.value=false;
+  if (props.useWorker && window.Worker) {
+    // Vite specific worker loading for type: 'module'
+    // markdownWorker = new Worker(new URL('@/workers/markdown.worker.js', import.meta.url), { type: 'module' });
+    // For public folder worker:
+    markdownWorker = new Worker('/markdown.worker.js', { type: 'module' }); // Make sure public/markdown.worker.js exists
+
+    markdownWorker.onmessage = (e) => {
+      const { type, blocks, html, originalId, message } = e.data;
+
+      if (type === 'blocks_splitted') {
+        rawBlocks.value = blocks.map(b => ({ ...b, html: '<p>Loading content...</p>' })); // 预填充，避免 key 问题
+        isLoading.value = false;
+        // 现在逐个请求解析每个块
         rawBlocks.value.forEach(block => {
-          MarkdownWorker.postMessage({
-            id: 'parse-${block.id}',
-            markdownBlock: block
-          });
+          if (markdownWorker) { // 检查 worker 是否仍然存在
+            markdownWorker.postMessage({ type: 'parse_block', markdownBlock: block });
+          }
         });
-      }else if(originalId && html!==undefined){
-        const blockIndex = rawBlocks.value.findIndex(block => block.id === originalId);
-        if(blockIndex !== -1){
-          const updatedBlock = {
-            ...rawBlocks.value[blockIndex],
-            html
-          };
+      } else if (type === 'block_parsed' && originalId) {
+        const blockIndex = rawBlocks.value.findIndex(b => b.id === originalId);
+        if (blockIndex !== -1) {
+          // Vue 3 ref array manipulation: create new array or splice for reactivity
+          const newBlocks = [...rawBlocks.value];
+          newBlocks[blockIndex] = { ...newBlocks[blockIndex], html };
+          rawBlocks.value = newBlocks;
         }
-        const targetBlock = rawBlocks.value.find(block => block.id === originalId);
-        if(targetBlock){
-          targetBlock.html = html;
-        }else{
-          console.warn('Block not found:', originalId);
-        }
+      } else if (type === 'error') {
+        console.error('Error from Markdown Worker:', message);
+        // 可以选择在这里降级到主线程处理
+        isLoading.value = false;
       }
     };
-    MarkdownWorker.onerror = (e) => {
-      console.error('Worker error:', e);
+
+    markdownWorker.onerror = (e) => {
+      console.error('Error initializing Markdown Worker:', e);
       isLoading.value = false;
-      processedMarkdownWithoutWorker(props.markdownText);
+      // Fallback to main thread processing if worker fails
+      processMarkdownWithoutWorker(props.markdownText);
+      markdownWorker = null; // Disable worker for future operations
     };
   }
 };
-const processedMarkdownWithoutWorker = (text) => {
-  console.log('Processing markdown on main thread');
-  rawBlocks.value = splitMarkdownIntoBlocks(text);
+const processMarkdownWithoutWorker = (text) => {
+  isLoading.value = true;
+  const splitted = splitMarkdownIntoBlocks(text);
+  rawBlocks.value = splitted.map(block => ({
+    ...block,
+    html: parseMarkdown(block.markdown)
+  }));
   isLoading.value = false;
-}
-const processedBlocks = computed(()=>{
-  if(props.useWorker&&MarkdownWorker){
-    return rawBlocks.value.map(block => ({
-      ...block,
-      html: block.html || '<p>Loading Blocks...</p>',
-    }));
-  }else{
-    return rawBlocks.value.map(block => ({
-      ...block,
-      html: parseMarkdown(block.markdownBlock),
-    }));
-  }
-});
+};
+const processedBlocks = computed(() => rawBlocks.value);
+
+
 watch(() => props.markdownText, (newText) => {
-  if(!newText){
+  if (!newText) {
     rawBlocks.value = [];
-    isLoading.value = true;
+    isLoading.value = false;
     return;
   }
   isLoading.value = true;
-  if(props.useWorker && MarkdownWorker){
-    MarkdownWorker.postMessage({
-      markdownText: newText
-    });
-  }else{
-    processedMarkdownWithoutWorker(newText);
+  if (props.useWorker && markdownWorker) {
+    markdownWorker.postMessage({ type: 'split_text', markdownText: newText });
+  } else if (props.useWorker && !markdownWorker && window.Worker) {
+    // Worker 应该被初始化但还没好，先尝试初始化
+    setupWorker();
+    // 等待 worker 初始化后，它会处理 (或者在 mounted 中已经初始化)
+    // 更好的做法是确保 worker 准备好后再发送消息
+     if (markdownWorker) {
+        markdownWorker.postMessage({ type: 'split_text', markdownText: newText });
+     } else {
+        // Worker 初始化失败或不支持，降级
+        processMarkdownWithoutWorker(newText);
+     }
   }
-},{immediate: true});
+  else {
+    processMarkdownWithoutWorker(newText);
+  }
+}, { immediate: true });
 onMounted(()=>{
-  if(props.useWorker){
+  if(props.useWorker&&window.Worker && !markdownWorker){
     setupWorker();
   }
   const hljsStyledId='hljs-styled';
@@ -135,9 +147,9 @@ onMounted(()=>{
   }
 });
 onBeforeUnmount(()=>{
-  if(MarkdownWorker){
-    MarkdownWorker.terminate();
-    MarkdownWorker = null;
+  if(markdownWorker){
+    markdownWorker.terminate();
+    markdownWorker = null;
   }
 });
 </script>
@@ -170,6 +182,91 @@ onBeforeUnmount(()=>{
     margin-top: 1em;
     margin-bottom: 0.5em;
     font-weight: 600;
+  }
+  h1{font-size: 2em;}
+  h2{font-size: 1.75em;}
+  h3{font-size: 1.5em;}
+  p{
+    line-height: 1.6;
+    margin-bottom: 1em;
+  }
+  a{
+    color: #0366d6;
+    text-decoration: none;
+    &:hover{
+      text-decoration: underline;
+    }
+  }
+  ul,ol{
+    padding-left:2em;
+    margin-bottom:1em;
+  }
+  li{
+    margin-bottom:0.25em;
+  }
+  blockquote{
+    margin-left:0;
+    padding:0.5em 1em;
+    color:#6a737d;
+    border-left:0.25em solid #dfe2e5;
+    background-color:#f9f9f9;
+  }
+  code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    padding: .2em .4em;
+    margin: 0;
+    font-size: 85%;
+    background-color: rgba(27,31,35,.05);
+    border-radius: 3px;
+  }
+  pre {
+    padding: 16px;
+    overflow: auto;
+    font-size: 85%;
+    line-height: 1.45;
+    background-color: #f6f8fa;
+    border-radius: 3px;
+    word-wrap: normal;
+    code {
+      padding: 0;
+      margin: 0;
+      font-size: 100%;
+      background-color: transparent;
+      border-radius: 0;
+      white-space: pre;
+    }
+  }
+
+  img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+  }
+
+  table {
+    border-collapse: collapse;
+    margin-bottom: 1em;
+    width: auto;
+    display: block;
+    overflow-x: auto;
+  }
+  th, td {
+    border: 1px solid #dfe2e5;
+    padding: 6px 13px;
+  }
+  th {
+    font-weight: 600;
+    background-color: #f6f8fa;
+  }
+
+  hr {
+    height: .25em;
+    padding: 0;
+    margin: 24px 0;
+    background-color: #e1e4e8;
+    border: 0;
   }
 }
 </style>

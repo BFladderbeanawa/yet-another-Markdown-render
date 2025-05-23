@@ -159,6 +159,10 @@ onMounted(() => {
 
 <style>
 /* 全局样式 */
+#app {
+  padding: 0 0 0 0;
+}
+
 body, html {
   margin: 0;
   padding: 0;
@@ -181,6 +185,7 @@ body, html {
   display: flex;       /* 设置为 flex 容器 */
   flex-direction: column; /* 子项垂直排列 */
 }
+
 .content-area.sidebar-collapsed {
   margin-left: 0;
 }
@@ -191,6 +196,11 @@ body, html {
   /* 这里没有直接设置 width 或 flex-basis，所以它应该继承父级的宽度或由 flex 布局决定 */
 }
 
+.markdown-block {
+  padding-left: 10%;
+  padding-right: 10%;
+  text-align: left;
+}
 
 .content-placeholder {
   display: flex;

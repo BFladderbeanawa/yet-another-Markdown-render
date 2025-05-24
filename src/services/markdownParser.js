@@ -1,6 +1,7 @@
 // src/services/markdownParser.js
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js'; // 如果你需要代码高亮
+import mdAnchor from 'markdown-it-anchor'; // 用于添加锚点
 
 // 初始化 markdown-it
 const md = new MarkdownIt({
@@ -18,6 +19,16 @@ const md = new MarkdownIt({
     return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>'; // 默认处理
   }
 });
+md.use(mdAnchor, {
+  level: [2, 3], // 只为 H2 和 H3 添加锚点
+  slugify: s => slugify(s), // 使用你自定义的 slugify 函数
+  permalink: mdAnchor.permalink.headerLink({ // 可选：添加一个永久链接图标/符号
+    // class: 'header-anchor', // 自定义class
+    // symbol: '#', // 自定义符号
+    // srText: 'Permalink to this section' // For screen readers
+  })
+  // 或者更简单的 permalink: true (会使用默认的符号和行为)
+});
 
 /**
  * 将 Markdown 文本解析为 HTML
@@ -29,54 +40,74 @@ export function parseMarkdown(markdown) {
   return md.render(markdown);
 }
 
-/**
- * 将 Markdown 文本分割成块。
- * 这里是一个简化的示例，你可以根据需要定义“块”的逻辑。
- * 例如，可以按标题、水平线或自定义分隔符分割。
- * 为了与你的 MarkdownRenderer.vue 更好地配合，这里的分割逻辑可能需要更复杂，
- * 例如，按空行、标题等有意义的结构分割。
- * 此处简化为按一级或二级标题分割，或者按多个空行分割。
- */
+
 export function splitMarkdownIntoBlocks(markdownText) {
   if (!markdownText || typeof markdownText !== 'string') return [];
 
-  // 这是一个非常基础的分割逻辑，你可以根据你的需求改进它
-  // 例如，可以按特定标记物分割，或者更智能地按内容结构分割
-  // 这个例子尝试按一级、二级标题或连续三个以上换行符分割
-  const blocks = markdownText
-    .split(/(\n#{1,2}\s[^\n]+|\n\n\n+)/g) // 按标题或多个空行分割，并保留分隔符
-    .reduce((acc, part, index, arr) => {
-      if (index % 2 === 0) { // 主内容部分
-        if (part.trim()) {
-          acc.push({ id: `block-${acc.length}-${Date.now()}`, markdown: part.trim() });
-        }
-      } else { // 分隔符部分 (标题或空行)
-        const lastBlock = acc[acc.length - 1];
-        if (lastBlock && part.trim()) {
-           // 将标题作为新块的开始，或者附加到前一个块（取决于你的逻辑）
-           // 这里我们选择将标题作为新块的开始
-           if (part.startsWith('\n#')) {
-             acc.push({ id: `block-${acc.length}-${Date.now()}`, markdown: part.trim() });
-           } else if (lastBlock) {
-             // 如果是空行分隔符，并且前一个块存在，可以将后续内容视为新块（如果前面已有内容）
-             // 或者，可以将分隔符附加到前一个块（若要保留空行）
-             // 简单起见，这里的空行分隔符会导致后续内容成为新块 (如果它非空)
-           }
-        }
-      }
-      return acc;
-    }, [])
-    .filter(block => block.markdown); // 移除空的 markdown 块
+  // 1. 分割 Markdown 文本成初步的块
+  // 你的分割逻辑可以保持，但可能需要调整以更好地适应 Markdown 结构。
+  // 例如，更可靠的分割可能是基于高阶标题 (H1, H2) 或者水平线。
+  // 这里我们使用一个更通用的按空行分割的逻辑，然后处理每个块。
+  // 或者，如果你的目标是确保每个 H2/H3 都在其逻辑块内，
+  // 而不是用 H2/H3 来分割块，那么分割逻辑会不同。
 
-  // 如果没有有效分割，则整个文本作为一个块
-  if (blocks.length === 0 && markdownText.trim()) {
-    return [{ id: `block-0-${Date.now()}`, markdown: markdownText.trim() }];
+  // 假设我们希望每个 H1 或 H2 开始一个新块，其他内容归属于前一个块。
+  // 这个分割逻辑比较复杂，我们先简化为按较大的空隙分割，
+  // 然后在每个块内查找 H2/H3。
+
+  const rawContentBlocks = markdownText
+    .split(/\n\s*\n\s*\n+/) // 按两个或更多连续的空行（即至少有三行，中间一行是空的）分割
+    .map(blockText => blockText.trim())
+    .filter(blockText => blockText.length > 0);
+
+  if (rawContentBlocks.length === 0 && markdownText.trim()) {
+    rawContentBlocks.push(markdownText.trim()); // 整个文本作为一个块
   }
-  
-  // 确保每个块都有唯一的 ID
-  return blocks.map((block, index) => ({ ...block, id: `block-${index}-${Date.now()}-${Math.random().toString(36).substring(2,7)}`}));
-}
 
+  const processedBlocks = [];
+
+  for (let i = 0; i < rawContentBlocks.length; i++) {
+    const currentMarkdownBlock = rawContentBlocks[i];
+    const containedHeadingIds = [];
+
+    // 2. 解析当前块以提取 H2/H3 标题 ID
+    // 使用 markdown-it 的 parse 方法获取 tokens
+    const tokens = md.parse(currentMarkdownBlock, {}); // md 实例应已配置 mdAnchor
+
+    tokens.forEach((token, tokenIndex) => {
+      if (token.type === 'heading_open' && (token.tag === 'h2' || token.tag === 'h3')) {
+        // 方式1: 从 markdown-it-anchor 添加的 attrs 中获取 id
+        if (token.attrs) {
+          const idAttr = token.attrs.find(attr => attr[0] === 'id');
+          if (idAttr && idAttr[1]) {
+            containedHeadingIds.push(idAttr[1]); // idAttr[1] 应该是已经 slugify 过的
+          }
+        }
+        // 方式2: 如果 mdAnchor 没有在 parse 阶段就添加 id (通常会)，
+        // 或者你需要确保，可以从标题文本重新 slugify。
+        // 但最好依赖 mdAnchor 的 slugify 结果以保证一致性。
+        /*
+        else {
+          const nextToken = tokens[tokenIndex + 1];
+          if (nextToken && nextToken.type === 'inline' && nextToken.content) {
+            containedHeadingIds.push(slugify(nextToken.content));
+          }
+        }
+        */
+      }
+    });
+
+    processedBlocks.push({
+      // 保持或改进你的 ID 生成逻辑，确保唯一性
+      id: `block-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      markdown: currentMarkdownBlock,
+      containedHeadingIds: containedHeadingIds, // 存储提取到的 H2/H3 ID
+      // html: "..." // HTML 将由 MarkdownRenderer 组件或 Worker 生成
+    });
+  }
+
+  return processedBlocks;
+}
 // 辅助函数：生成 slug (用于标题 ID)
 export function slugify(text) {
   return String(text).toLowerCase()
@@ -85,4 +116,5 @@ export function slugify(text) {
     .replace(/--+/g, '-')         // 替换多个 - 为单个 -
     .replace(/^-+/, '')             // 从文本开头移除 -
     .replace(/-+$/, '');            // 从文本末尾移除 -
+    return `heading-${s}`;
 }

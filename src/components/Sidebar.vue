@@ -16,15 +16,17 @@
           @select-file="path => $emit('select-file', path)"
         />
       </div>
-      <div v-if="!isCollapsed && activeFilePath && activeFileHeadings.length > 0" class="article-outline">
-        <h4 class="sidebar-title">本文大纲</h4>
+      <div v-if="activeFilePath && activeFileHeadings.length > 0" class="article-outline">
+        <h4>In this article:</h4>
         <ul>
           <li
             v-for="heading in activeFileHeadings"
             :key="heading.id"
-            :class="`heading-level-${heading.level}`"
+            :class="[
+              `heading-level-${heading.level}`,
+              { 'active-heading': heading.id === activeScrolledHeadingId } // (1) Add active class
+            ]"
             @click="navigateToHeading(heading.id)"
-            :title="heading.text"
           >
             {{ heading.text }}
           </li>
@@ -41,7 +43,8 @@ const props = defineProps({
   tree: Array, // tree 是顶级项目的数组
   activeFilePath: String,
   activeFileHeadings: Array,
-  isCollapsed: Boolean
+  isCollapsed: Boolean,
+  activeScrolledHeadingId: String
 });
 
 const emit = defineEmits(['select-file', 'toggle-collapse', 'navigate-to-heading']);
@@ -120,35 +123,29 @@ function navigateToHeading(headingId) {
   margin-bottom: 25px;
 }
 
-.article-outline {
-  margin-top: 20px;
-  padding-top: 15px;
-  border-top: 1px solid #d0d7de;
-}
-.article-outline ul {
-  list-style-type: none;
-  padding-left: 0;
-  margin: 0;
-}
 .article-outline li {
-  padding: 5px 8px;
+  padding: 4px 10px; /* Adjust padding */
   cursor: pointer;
-  color: #24292e;
+  color: #555; /* Default color */
   font-size: 0.9em;
-  border-radius: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background-color 0.15s ease;
+  border-left: 2px solid transparent; /* For active indicator */
+  transition: background-color 0.2s ease, border-left-color 0.2s ease;
 }
 .article-outline li:hover {
-  background-color: #e1e4e8;
-  color: #0969da;
+  color: #007bff;
 }
+.article-outline li.active-heading {
+  color: #007bff; /* Active text color */
+  font-weight: 600;
+  background-color: #e6f2ff; /* Light blue background for active */
+  border-left-color: #007bff; /* Active border color */
+}
+
 .article-outline .heading-level-3 {
-  padding-left: 20px; /* H3 缩进 */
+  padding-left: 25px; /* More indentation for H3 */
 }
-.article-outline .heading-level-2 {
-  font-weight: 500; /* H2 可以稍微加粗 */
+/* Add more specific styles for deeper levels if needed */
+.article-outline .heading-level-4 { /* If you support H4 */
+  padding-left: 40px;
 }
 </style>

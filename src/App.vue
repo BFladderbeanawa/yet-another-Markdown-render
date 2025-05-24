@@ -4,6 +4,7 @@
       :tree="docTree"
       :active-file-path="activeFilePath"
       :active-file-headings="activeFileHeadings"
+      :active-scrolled-heading-id="activeScrolledHeadingId"
       :is-collapsed="isSidebarCollapsed"
       @select-file="handleSelectFile"
       @toggle-collapse="isSidebarCollapsed = !isSidebarCollapsed"
@@ -17,6 +18,7 @@
         v-if="activeFileContent !== null"
         :markdown-text="activeFileContent"
         :use-worker="false"
+        @active-heading-changed="handleActiveHeadingChanged"
         ref="markdownRendererRef"
         class="markdown-view-wrapper"
       />
@@ -38,11 +40,17 @@ const docTree = ref(docTreeDataArray); // docTreeDataArray 是顶级项目的数
 const activeFilePath = ref(null);
 const activeFileContent = ref(null); // 初始化为 null，以区分空内容和未选择
 const activeFileHeadings = ref([]);
+const activeScrolledHeadingId = ref(null);
 const isSidebarCollapsed = ref(false);
 const isFetchingFile = ref(false); // 用于指示文件正在加载
 const markdownRendererRef = ref(null); // 引用 MarkdownRenderer 组件
 
 const mdItForHeadings = new MarkdownIt(); // 单独用于提取标题的实例
+
+function handleActiveHeadingChanged(headingId) {
+  activeScrolledHeadingId.value = headingId;
+}
+
 
 async function fetchAndPrepareMarkdown(filePath) {
   if (!filePath) {
@@ -57,6 +65,7 @@ async function fetchAndPrepareMarkdown(filePath) {
   activeFilePath.value = filePath;
   activeFileContent.value = ''; // 临时设置为空字符串，让 MarkdownRenderer 显示加载
   activeFileHeadings.value = [];
+  activeScrolledHeadingId.value = null;
 
   try {
     // filePath 类似于 "docs/ProjectA/1-Intro.md"
@@ -83,7 +92,7 @@ async function fetchAndPrepareMarkdown(filePath) {
             text: text,
             // 重要：确保 slugify 与你的 Markdown 渲染器 (或 markdown-it 配置) 生成的 ID 一致
             // 如果 MarkdownRenderer 内部的解析会给标题添加 ID，最好从那里获取或确保逻辑统一
-            id: slugify(text) // 使用 markdownParser.js 中的 slugify
+            id: slugify(textToken.content) // 使用 markdownParser.js 中的 slugify
           });
         }
       }
@@ -107,31 +116,30 @@ function handleSelectFile(filePath) {
 // 注意：这假设你的 MarkdownRenderer (或其内部的 markdown-it) 会为标题生成 ID
 // 并且这些 ID 与 slugify(text) 生成的一致。
 async function scrollToHeadingInMarkdownRenderer(headingId) {
-  await nextTick(); // 等待 DOM 更新
+  console.log("App.vue: Attempting to scroll to heading ID in renderer:", headingId);
+  if (typeof headingId === 'undefined' || headingId === null) {
+      console.error("App.vue: scrollToHeadingInMarkdownRenderer called with undefined or null headingId.");
+      return;
+  }
 
-  // MarkdownRenderer 使用了 vue-virtual-scroller，直接查询 ID 可能不起作用，
-  // 因为元素可能还未被渲染到 DOM 中。
-  // 理想情况下，MarkdownRenderer 应该提供一个方法来滚动到特定内容块或ID。
-
-  // 简化版：尝试在整个文档渲染后查找。
-  // 对于虚拟滚动，这可能只在元素可见时才有效。
-  // 你可能需要增强 MarkdownRenderer.vue 来支持更可靠的滚动。
-  const rendererContainer = markdownRendererRef.value?.$el; // 获取 DOM 元素
-  if (rendererContainer) {
-    const element = rendererContainer.querySelector(`#${headingId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else {
-      console.warn(`在 MarkdownRenderer 中未找到 ID 为 "${headingId}" 的标题。可能尚未渲染或 ID不匹配。`);
-      // 尝试滚动到 MarkdownRenderer 的顶部作为回退
-      if (markdownRendererRef.value && typeof markdownRendererRef.value.scrollToItem === 'function') {
-         // 如果 MarkdownRenderer 的 scroller 暴露了方法，可以尝试滚动到顶部
-         // 或者直接滚动其容器
-         const scrollerEl = rendererContainer.querySelector('.scroller');
-         if (scrollerEl) scrollerEl.scrollTop = 0;
-
-      } else if (rendererContainer.scrollTop !== undefined) {
-        rendererContainer.scrollTop = 0;
+  if (markdownRendererRef.value && typeof markdownRendererRef.value.scrollToHeading === 'function') {
+    // 调用 MarkdownRenderer 组件暴露的 scrollToHeading 方法
+    markdownRendererRef.value.scrollToHeading(headingId);
+  } else {
+    console.warn("MarkdownRenderer ref not available or scrollToHeading method not exposed.");
+    // Fallback (旧的直接 DOM 操作，可能在虚拟滚动下不可靠)
+    await nextTick();
+    const rendererContainer = markdownRendererRef.value?.$el;
+    if (rendererContainer) {
+      try {
+        const element = rendererContainer.querySelector(`#${CSS.escape(headingId)}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          console.warn(`Fallback: 在 MarkdownRenderer DOM 中未找到 ID 为 "${headingId}" 的标题。`);
+        }
+      } catch (e) {
+          console.error(`Fallback: querySelector error for ID "${headingId}":`, e);
       }
     }
   }

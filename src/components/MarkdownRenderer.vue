@@ -35,7 +35,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onBeforeUnmount, computed} from 'vue';
+import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick, onUpdated} from 'vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
 // 确保这个路径是正确的，指向我们上面创建的 markdownParser.js
@@ -53,9 +53,28 @@ const props = defineProps({
   }
 });
 
+const emit = defineEmits(['active-heading-changed']);
+
+const containerRef = ref(null);
+const scrollerRef = ref(null);
 const rawBlocks = ref([]); // 从 splitMarkdownIntoBlocks 返回的原始块数组
 const isLoading = ref(true);
 let markdownWorker = null;
+
+const headingsInView = ref([]);
+
+const collectHeadings = () => {
+  if(!containerRef.value) return;
+  const headingElements = containerRef.value.querySelectorAll('h2[id], h3[id]');
+  const newHeadings = [];
+  headingElements.forEach(e1 => {
+    newHeadings.push({
+      id: e1.id,
+      top: e1.offsetTop,
+    });
+  });
+  headingsInView.value = newHeadings.sort((a, b) => a.top - b.top);
+}
 
 const setupWorker = () => {
   if (props.useWorker && window.Worker) {
@@ -128,8 +147,13 @@ const processMarkdownWithoutWorker = (text) => {
 // computed 属性，确保 DynamicScroller 总是拿到最新的块列表
 const processedBlocks = computed(() => rawBlocks.value);
 
-watch(() => props.markdownText, (newText, oldText) => {
+watch(() => props.markdownText, async(newText, oldText) => {
   if (newText === oldText && !isLoading.value) return; // 避免不必要的重复处理
+  if(!isLoading.value){
+    await nextTick(); // 确保 DOM 更新完成
+    await nextTick();
+    collectHeadings(); // 收集当前视图中的标题
+  }
 
   if (!newText) {
     rawBlocks.value = [];
@@ -150,6 +174,36 @@ watch(() => props.markdownText, (newText, oldText) => {
     processMarkdownWithoutWorker(newText);
   }
 }, { immediate: true }); // immediate: true 确保初始加载时执行
+
+let lastActiveHeadingId = null;
+// (4) Scroll event handler for the scrollable container
+const handleScroll = (event) => {
+  if (!headingsInView.value.length || !event.target) return;
+
+  const scrollPosition = event.target.scrollTop;
+  let currentActiveId = null;
+  const threshold = 60; // Adjust as needed
+
+  for (let i = headingsInView.value.length - 1; i >= 0; i--) {
+    const heading = headingsInView.value[i];
+    if (heading.top <= scrollPosition + threshold) {
+      currentActiveId = heading.id;
+      break;
+    }
+  }
+
+  // If scrolled to top and no heading is past threshold, activate first if visible
+  if (currentActiveId === null && headingsInView.value.length > 0 && scrollPosition < headingsInView.value[0].top) {
+     // Optionally, don't activate any, or activate the first.
+     currentActiveId = headingsInView.value[0].id;
+  }
+
+
+  if (currentActiveId !== lastActiveHeadingId) {
+    emit('active-heading-changed', currentActiveId);
+    lastActiveHeadingId = currentActiveId;
+  }
+};
 
 onMounted(() => {
   if (props.useWorker && window.Worker && !markdownWorker) {
@@ -172,12 +226,18 @@ onMounted(() => {
     link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'; // 例如 github-dark 主题
     document.head.appendChild(link);
   }
+  if (containerRef.value) { // Assuming containerRef is the scrollable element
+    containerRef.value.addEventListener('scroll', handleScroll, { passive: true });
+  }
 });
 
 onBeforeUnmount(() => {
   if (markdownWorker) {
     markdownWorker.terminate();
     markdownWorker = null;
+  }
+  if (containerRef.value) {
+    containerRef.value.removeEventListener('scroll', handleScroll);
   }
 });
 </script>
@@ -275,7 +335,7 @@ onBeforeUnmount(() => {
     padding: .2em .4em;
     margin: 0;
     font-size: 85%;
-    background-color: rgba(175, 184, 193, 0.2); // GitHub 内联代码背景
+    //background-color: rgba(175, 184, 193, 0.2); // GitHub 内联代码背景
     border-radius: 6px; // GitHub 圆角
   }
 
@@ -285,7 +345,7 @@ onBeforeUnmount(() => {
     overflow: auto;
     font-size: 85%;
     line-height: 1.45;
-    background-color: #f6f8fa; // GitHub 代码块背景
+    background-color: #525252; // GitHub 代码块背景
     border-radius: 6px; // GitHub 圆角
     margin-bottom: 1em;
 
@@ -298,7 +358,7 @@ onBeforeUnmount(() => {
       white-space: pre; // 保持 pre 的 white-space 行为
       text-align: left;
       display: block; // 确保代码块占满 pre
-      color: #24292e; // 默认代码颜色，hljs 会覆盖
+      // color: #24292e; // 默认代码颜色，hljs 会覆盖
     }
   }
 

@@ -1,15 +1,30 @@
 <template>
   <aside :class="['sidebar', { collapsed: isCollapsed }]">
-    <button @click="$emit('toggle-collapse')" class="collapse-btn" v-show="!isCollapsed" title="折叠/展开侧边栏">
-      {{ isCollapsed ? "显示" : "隐藏" }}
+    <button
+      @click="$emit('toggle-collapse')"
+      class="collapse-btn"
+      v-show="!isCollapsed"
+      title="折叠/展开侧边栏"
+    >
+      {{ isCollapsed ? '显示' : '隐藏' }}
     </button>
     <div v-if="!isCollapsed" class="sidebar-content">
       <div class="file-tree">
         <h3 class="sidebar-title">文档导航</h3>
         <!-- 如果 tree 是一个数组，直接遍历 -->
-        <TreeItem v-for="topItem in tree" :key="topItem.path || topItem.name" :item="topItem" :active-file-path="activeFilePath" :depth="0" @select-file="(path) => $emit('select-file', path)" />
+        <TreeItem
+          v-for="topItem in tree"
+          :key="topItem.path || topItem.name"
+          :item="topItem"
+          :active-file-path="activeFilePath"
+          :depth="0"
+          @select-file="(path) => $emit('select-file', path)"
+        />
       </div>
-      <div v-if="activeFilePath && activeFileHeadings.length > 0" class="article-outline">
+      <div
+        v-if="activeFilePath && activeFileHeadings.length > 0"
+        class="article-outline"
+      >
         <h4>In this article:</h4>
         <ul>
           <li
@@ -17,9 +32,10 @@
             :key="heading.id"
             :class="[
               `heading-level-${heading.level}`,
-              { 'active-heading': heading.id === activeScrolledHeadingId }, // (1) Add active class
+              { 'active-heading': heading.id === activeScrolledHeadingId } // (1) Add active class
             ]"
-            @click="navigateToHeading(heading.id)">
+            @click="navigateToHeading(heading.id)"
+          >
             {{ heading.text }}
           </li>
         </ul>
@@ -29,20 +45,24 @@
 </template>
 
 <script setup>
-import TreeItem from "./TreeItem.vue";
+import TreeItem from './TreeItem.vue'
 
 const props = defineProps({
   tree: Array, // tree 是顶级项目的数组
   activeFilePath: String,
   activeFileHeadings: Array,
   isCollapsed: Boolean,
-  activeScrolledHeadingId: String,
-});
+  activeScrolledHeadingId: String
+})
 
-const emit = defineEmits(["select-file", "toggle-collapse", "navigate-to-heading"]);
+const emit = defineEmits([
+  'select-file',
+  'toggle-collapse',
+  'navigate-to-heading'
+])
 
 function navigateToHeading(headingId) {
-  emit("navigate-to-heading", headingId);
+  emit('navigate-to-heading', headingId)
 }
 </script>
 
@@ -53,7 +73,9 @@ function navigateToHeading(headingId) {
   border-right: 1px solid #d0d7de; /* GitHub-like border */
   padding: 0; /* 改为0，让 sidebar-content 控制内边距 */
   overflow-y: auto;
-  transition: width 0.3s ease, padding 0.3s ease;
+  transition:
+    width 0.3s ease,
+    padding 0.3s ease;
   height: 100vh;
   box-sizing: border-box;
   position: relative;
@@ -118,7 +140,9 @@ function navigateToHeading(headingId) {
   color: #555; /* Default color */
   font-size: 0.9em;
   border-left: 2px solid transparent; /* For active indicator */
-  transition: background-color 0.2s ease, border-left-color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-left-color 0.2s ease;
 }
 .article-outline li:hover {
   color: #007bff;

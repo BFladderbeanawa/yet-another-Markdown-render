@@ -1,49 +1,56 @@
 // scripts/generate-docs.js
-import fs from 'fs-extra'; // 使用 import
-import path from 'path';   // 使用 import
-import { fileURLToPath } from 'url'; // 用于获取 __dirname
+import fs from 'fs'; // 使用原生 fs
+import path from 'path';
+import chokidar from 'chokidar';
+import { fileURLToPath } from 'url';
 
-// 获取在 ES 模块中的 __filename 和 __dirname
+// ES Module replacements for __dirname and __filename
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 【重要配置】你的 Markdown 源文件夹路径
-const sourceRootDir = 'D:\\GraduateTextsInTechnicalMC'; // <--- 修改为你实际的 Markdown 源文件夹
-// Vue 项目 public 目录下的目标文件夹，用于存放复制后的 .md 文件
-const publicDocsDir = path.join(__dirname, '..', 'public', 'docs');
-// 生成的 JSON 树数据的存放路径
-const treeDataPath = path.join(__dirname, '..', 'src', 'doc-tree.json');
+// const sourceRootDir = 'D:\\BlockUpdate'; // REMOVED: No longer reading from a separate source
+const publicDocsDir = path.join(__dirname, '..', 'public', 'docs'); // Directory to scan
+const treeDataPath = path.join(__dirname, '..', 'src', 'doc-tree.json'); // Output JSON path
 
-/**
- * 解析 .ignore 文件内容
- * @param {string} dir 目录路径
- * @returns {string[]} 忽略的文件/文件夹名称列表
- */
 function parseIgnoreFile(dir) {
     const ignoreFilePath = path.join(dir, '.ignore');
     if (fs.existsSync(ignoreFilePath)) {
-        return fs.readFileSync(ignoreFilePath, 'utf-8')
-            .split(/\r?\n/) // 处理 Windows 和 Unix 换行符
-            .map(line => line.trim())
-            .filter(line => line && !line.startsWith('#')); // 忽略空行和注释
+        try {
+            return fs.readFileSync(ignoreFilePath, 'utf-8')
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line => line && !line.startsWith('#'));
+        } catch (error) {
+            console.error(`Error reading .ignore file at ${ignoreFilePath}:`, error);
+            return [];
+        }
     }
     return [];
 }
 
-/**
- * 构建目录树的核心函数
- * @param {string} currentSourceDir 当前处理的源目录
- * @param {string} currentPublicRelativePath 当前目录在 public/docs 下的相对路径
- * @returns {object | null} 目录节点对象
- */
-function buildTree(currentSourceDir, currentPublicRelativePath) {
-    const items = fs.readdirSync(currentSourceDir);
-    const ignoredItems = parseIgnoreFile(currentSourceDir);
+// generateSlug is not used in this script version as we are not generating IDs here,
+// but keeping it in case it's needed for other logic or future reference.
+// function generateSlug(text) { ... }
+
+
+// buildTree now scans a directory within public/docs
+// currentDirNameInPublicDocs: Name of the current directory being processed (relative to publicDocsDir)
+// basePathForNode: Base path string to construct the node's 'path' attribute (relative to 'docs/')
+function buildTreeFromPublic(currentDirNameInPublicDocs, basePathForNode) {
+    const currentAbsolutePath = path.join(publicDocsDir, currentDirNameInPublicDocs);
+
+    if (!fs.existsSync(currentAbsolutePath) || !fs.statSync(currentAbsolutePath).isDirectory()) {
+        console.warn(`  [buildTree] Directory not found or not a directory: ${currentAbsolutePath}`);
+        return null;
+    }
+
+    const items = fs.readdirSync(currentAbsolutePath);
+    const ignoredItems = parseIgnoreFile(currentAbsolutePath);
 
     const node = {
-        name: path.basename(currentSourceDir),
+        name: path.basename(currentDirNameInPublicDocs), // Folder name
         type: 'folder',
-        path: `docs/${currentPublicRelativePath.replace(/\\/g, '/')}`,
+        path: `docs/${basePathForNode.replace(/\\/g, '/')}`, // Path like 'docs/FolderName' or 'docs/FolderName/SubFolderName'
         children: []
     };
 
@@ -55,13 +62,15 @@ function buildTree(currentSourceDir, currentPublicRelativePath) {
             continue;
         }
 
-        const sourceItemPath = path.join(currentSourceDir, item);
-        const itemPublicPathSegment = path.join(currentPublicRelativePath, item);
-        const stat = fs.statSync(sourceItemPath);
+        const itemRelativePathInPublicDocs = path.join(currentDirNameInPublicDocs, item); // e.g., "FolderName/ItemName"
+        const itemAbsolutePath = path.join(publicDocsDir, itemRelativePathInPublicDocs);
+        const stat = fs.statSync(itemAbsolutePath);
+
+        const newItemBasePathForNode = path.join(basePathForNode, item); // e.g., "FolderName/ItemName"
 
         if (stat.isDirectory()) {
-            const subfolderNode = buildTree(sourceItemPath, itemPublicPathSegment);
-            if (subfolderNode && subfolderNode.children.length > 0) {
+            const subfolderNode = buildTreeFromPublic(itemRelativePathInPublicDocs, newItemBasePathForNode);
+            if (subfolderNode && subfolderNode.children && subfolderNode.children.length > 0) {
                 subfolders.push(subfolderNode);
             }
         } else if (item.endsWith('.md')) {
@@ -69,17 +78,13 @@ function buildTree(currentSourceDir, currentPublicRelativePath) {
             if (match) {
                 const order = parseInt(match[1]);
                 const name = match[2];
-                const targetFilePath = path.join(publicDocsDir, itemPublicPathSegment);
-
-                fs.ensureDirSync(path.dirname(targetFilePath));
-                fs.copySync(sourceItemPath, targetFilePath);
 
                 files.push({
                     name: name,
                     order: order,
                     fullName: item,
                     type: 'file',
-                    path: `docs/${itemPublicPathSegment.replace(/\\/g, '/')}`,
+                    path: `docs/${newItemBasePathForNode.replace(/\\/g, '/')}`, // Path like 'docs/FolderName/1-File.md'
                     headings: []
                 });
             }
@@ -93,74 +98,152 @@ function buildTree(currentSourceDir, currentPublicRelativePath) {
     return node;
 }
 
-/**
- * 主执行函数
- */
-async function main() {
-    console.log(`正在清理旧的文档目录: ${publicDocsDir}...`);
-    await fs.emptyDir(publicDocsDir);
 
-    console.log(`正在从 ${sourceRootDir} 的顶级项目构建目录树...`);
+// Core logic to generate the tree, to be called by main and watcher
+async function generateTreeCore() {
+    console.log(`--- Starting Tree Generation from ${publicDocsDir} ---`);
+    console.log('Will write to treeDataPath:', treeDataPath);
+
+    if (!fs.existsSync(publicDocsDir)) {
+        console.error(`Error: Directory ${publicDocsDir} does not exist. Cannot build documentation tree.`);
+        fs.writeFileSync(treeDataPath, JSON.stringify([], null, 2));
+        console.log(`Wrote empty array to ${treeDataPath} because publicDocsDir does not exist.`);
+        return;
+    }
 
     const topLevelTreeNodes = [];
-    const sourceRootItems = fs.readdirSync(sourceRootDir);
-    const ignoredRootItems = parseIgnoreFile(sourceRootDir);
+    const publicDocsRootItems = fs.readdirSync(publicDocsDir);
+    console.log('Top level items in publicDocsDir:', publicDocsRootItems);
 
-    for (const item of sourceRootItems) {
+    const ignoredRootItems = parseIgnoreFile(publicDocsDir);
+    console.log('Ignored root items:', ignoredRootItems);
+
+    for (const item of publicDocsRootItems) {
+        console.log(`Processing top-level item: ${item}`);
         if (ignoredRootItems.includes(item) || item === '.ignore' || item.startsWith('.')) {
+            console.log(`  Skipping ignored top-level item: ${item}`);
             continue;
         }
 
-        const sourceItemPath = path.join(sourceRootDir, item);
-        const stat = fs.statSync(sourceItemPath);
+        // item is directly under public/docs, e.g., "ProjectA" or "0-RootFile.md"
+        const itemAbsolutePath = path.join(publicDocsDir, item);
+        const stat = fs.statSync(itemAbsolutePath);
 
         if (stat.isDirectory()) {
-            const folderNode = buildTree(sourceItemPath, item);
-            if (folderNode && folderNode.children.length > 0) {
+            // For a top-level directory "ProjectA":
+            // currentDirNameInPublicDocs will be "ProjectA"
+            // basePathForNode will be "ProjectA" (to form path "docs/ProjectA")
+            const folderNode = buildTreeFromPublic(item, item);
+            if (folderNode && folderNode.children && folderNode.children.length > 0) {
                 topLevelTreeNodes.push(folderNode);
+            } else {
+                 console.log(`  Skipping top-level folder ${item} as it's empty or null.`);
             }
         } else if (item.endsWith('.md')) {
             const match = item.match(/^(\d+)-(.+)\.md$/);
             if (match) {
                 const order = parseInt(match[1]);
                 const name = match[2];
-                const targetFilePath = path.join(publicDocsDir, item);
-
-                fs.ensureDirSync(path.dirname(targetFilePath));
-                fs.copySync(sourceItemPath, targetFilePath);
-
-                topLevelTreeNodes.push({
+                const fileNode = {
                     name: name,
                     order: order,
                     fullName: item,
                     type: 'file',
-                    path: `docs/${item.replace(/\\/g, '/')}`,
+                    path: `docs/${item.replace(/\\/g, '/')}`, // Path like "docs/0-RootFile.md"
                     headings: []
-                });
+                };
+                topLevelTreeNodes.push(fileNode);
+                console.log(`  Added top-level file: ${item}`);
+            } else {
+                console.log(`  Skipping top-level .md file with invalid name format: ${item}`);
             }
+        } else {
+            console.log(`  Skipping non-md file/non-directory top-level item: ${item}`);
         }
     }
 
+    // Sort top-level items
     topLevelTreeNodes.sort((a, b) => {
-        if (a.type === 'file' && b.type === 'file') {
-            return a.order - b.order;
-        }
-        if (a.type === 'folder' && b.type === 'folder') {
-            return a.name.localeCompare(b.name);
-        }
-        if (a.type === 'file' && b.type === 'folder') return -1;
-        if (a.type === 'folder' && b.type === 'file') return 1;
+        if (a.type === 'file' && b.type === 'file') return a.order - b.order;
+        if (a.type === 'folder' && b.type === 'folder') return a.name.localeCompare(b.name);
+        if (a.type === 'file' && b.type === 'folder') return -1; // Files before folders
+        if (a.type === 'folder' && b.type === 'file') return 1;  // Folders after
         return 0;
     });
+    console.log(`Final topLevelTreeNodes count: ${topLevelTreeNodes.length}`);
 
-    // 使用 fs.writeJSONSync 来确保目录存在，或者继续使用 writeFileSync
-    // fs.writeJSONSync(treeDataPath, topLevelTreeNodes, { spaces: 2 });
-    fs.writeFileSync(treeDataPath, JSON.stringify(topLevelTreeNodes, null, 2));
-    console.log(`文档树已生成: ${treeDataPath} (现在是一个顶级项目数组)`);
-    console.log(`Markdown 文件已复制到: ${publicDocsDir}`);
+    try {
+        fs.writeFileSync(treeDataPath, JSON.stringify(topLevelTreeNodes, null, 2));
+        console.log(`Docs tree successfully generated at ${treeDataPath}`);
+    } catch (writeError) {
+        console.error(`Failed to write to ${treeDataPath}:`, writeError);
+    }
 }
 
+function handleGenerationError(error) {
+    console.error("Failed to generate documentation tree:", error);
+    try {
+        fs.writeFileSync(treeDataPath, JSON.stringify([], null, 2));
+        console.log(`Wrote empty tree to ${treeDataPath} due to error.`);
+    } catch (writeError) {
+        console.error("Failed to write empty tree:", writeError);
+    }
+}
+
+async function main() {
+    const isWatchMode = process.argv.includes('--watch');
+
+    try {
+        await generateTreeCore();
+    } catch (error) {
+        handleGenerationError(error);
+        if (!isWatchMode) process.exit(1); // Exit if not watching and error occurs
+    }
+
+    if (isWatchMode) {
+        console.log(`Watching for changes in ${publicDocsDir}...`);
+        const watcher = chokidar.watch(publicDocsDir, {
+            ignored:  path => path.includes('.DS_Store') || /(^|[\/\\])\../.test(path), // ignore dotfiles and .DS_Store
+            persistent: true,
+            ignoreInitial: true,
+            awaitWriteFinish: {
+                stabilityThreshold: 300, // ms to wait for more changes
+                pollInterval: 100
+            }
+        });
+
+        const regenerate = (event, filePath) => {
+            console.log(`Detected ${event} in ${filePath}. Regenerating doc tree...`);
+            generateTreeCore().catch(err => {
+                handleGenerationError(err); // Log error but keep watcher running
+            });
+        };
+
+        watcher
+            .on('add', regenerate)
+            .on('addDir', regenerate)
+            .on('change', (filePath) => { // Be more specific for 'change'
+                if (path.basename(filePath) === '.ignore' || filePath.endsWith('.md')) {
+                    regenerate('change', filePath);
+                }
+            })
+            .on('unlink', regenerate)
+            .on('unlinkDir', regenerate);
+
+        process.on('SIGINT', () => {
+            console.log('Stopping watcher...');
+            watcher.close().then(() => {
+                console.log('Watcher stopped.');
+                process.exit(0);
+            });
+        });
+    } else {
+        // console.log('Doc tree generation complete.'); // Already logged in generateTreeCore
+    }
+}
+
+// Execute main function
 main().catch(error => {
-    console.error("生成文档时发生错误:", error);
+    console.error("Unhandled error during script execution:", error);
     process.exit(1);
 });

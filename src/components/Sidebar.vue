@@ -1,20 +1,13 @@
 <template>
   <aside :class="['sidebar', { collapsed: isCollapsed }]">
     <button @click="$emit('toggle-collapse')" class="collapse-btn" v-show="!isCollapsed" title="折叠/展开侧边栏">
-      {{ isCollapsed ? '显示' : '隐藏' }}
+      {{ isCollapsed ? "显示" : "隐藏" }}
     </button>
     <div v-if="!isCollapsed" class="sidebar-content">
       <div class="file-tree">
         <h3 class="sidebar-title">文档导航</h3>
         <!-- 如果 tree 是一个数组，直接遍历 -->
-        <TreeItem
-          v-for="topItem in tree"
-          :key="topItem.path || topItem.name"
-          :item="topItem"
-          :active-file-path="activeFilePath"
-          :depth="0"
-          @select-file="path => $emit('select-file', path)"
-        />
+        <TreeItem v-for="topItem in tree" :key="topItem.path || topItem.name" :item="topItem" :active-file-path="activeFilePath" :depth="0" @select-file="(path) => $emit('select-file', path)" />
       </div>
       <div v-if="activeFilePath && activeFileHeadings.length > 0" class="article-outline">
         <h4>In this article:</h4>
@@ -24,10 +17,9 @@
             :key="heading.id"
             :class="[
               `heading-level-${heading.level}`,
-              { 'active-heading': heading.id === activeScrolledHeadingId } // (1) Add active class
+              { 'active-heading': heading.id === activeScrolledHeadingId }, // (1) Add active class
             ]"
-            @click="navigateToHeading(heading.id)"
-          >
+            @click="navigateToHeading(heading.id)">
             {{ heading.text }}
           </li>
         </ul>
@@ -37,20 +29,20 @@
 </template>
 
 <script setup>
-import TreeItem from './TreeItem.vue';
+import TreeItem from "./TreeItem.vue";
 
 const props = defineProps({
   tree: Array, // tree 是顶级项目的数组
   activeFilePath: String,
   activeFileHeadings: Array,
   isCollapsed: Boolean,
-  activeScrolledHeadingId: String
+  activeScrolledHeadingId: String,
 });
 
-const emit = defineEmits(['select-file', 'toggle-collapse', 'navigate-to-heading']);
+const emit = defineEmits(["select-file", "toggle-collapse", "navigate-to-heading"]);
 
 function navigateToHeading(headingId) {
-  emit('navigate-to-heading', headingId);
+  emit("navigate-to-heading", headingId);
 }
 </script>
 
@@ -83,7 +75,6 @@ function navigateToHeading(headingId) {
   overflow-y: auto; /* 如果内容过多，允许滚动 */
 }
 
-
 .collapse-btn {
   display: block; /* 改为块级元素，方便定位和样式 */
   background: #f6f8fa;
@@ -103,7 +94,6 @@ function navigateToHeading(headingId) {
   background-color: #e1e4e8;
 }
 
-
 .sidebar.collapsed .collapse-btn {
   display: none; /* 折叠时，由 App.vue 中的按钮控制展开 */
 }
@@ -117,7 +107,6 @@ function navigateToHeading(headingId) {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-
 
 .file-tree {
   margin-bottom: 25px;
@@ -145,7 +134,8 @@ function navigateToHeading(headingId) {
   padding-left: 25px; /* More indentation for H3 */
 }
 /* Add more specific styles for deeper levels if needed */
-.article-outline .heading-level-4 { /* If you support H4 */
+.article-outline .heading-level-4 {
+  /* If you support H4 */
   padding-left: 40px;
 }
 </style>

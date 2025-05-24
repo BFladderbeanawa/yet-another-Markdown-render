@@ -38,8 +38,8 @@
 import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick, onUpdated} from 'vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
-// 确保这个路径是正确的，指向我们上面创建的 markdownParser.js
-import { parseMarkdown, splitMarkdownIntoBlocks } from '../services/markdownParser';
+// 导入你的解析服务
+import { parseMarkdown, splitMarkdownIntoBlocks } from '../services/markdownParser'; // 确保路径正确
 
 const props = defineProps({
   markdownText: {
@@ -47,9 +47,13 @@ const props = defineProps({
     required: true,
     default: '',
   },
-  useWorker: { // 控制是否使用 Worker
+  useWorker: {
     type: Boolean,
-    default: true, // 默认启用 Worker (如果可用)
+    default: true, // 假设你想默认启用 Worker (如果它实现了 basePath 处理)
+  },
+  basePath: { // 从 App.vue 传递过来
+    type: String,
+    default: ''
   }
 });
 
@@ -57,61 +61,72 @@ const emit = defineEmits(['active-heading-changed']);
 
 const containerRef = ref(null);
 const scrollerRef = ref(null);
-const rawBlocks = ref([]); // 从 splitMarkdownIntoBlocks 返回的原始块数组
+const rawBlocks = ref([]); // 包含 id, markdown, containedHeadingIds, html
 const isLoading = ref(true);
 let markdownWorker = null;
 
-const headingsInView = ref([]);
+const headingsInView = ref([]); // 用于 scrollspy
 
 const collectHeadings = () => {
-  if(!containerRef.value) return;
-  const headingElements = containerRef.value.querySelectorAll('h2[id], h3[id]');
+  if(!containerRef.value || !scrollerRef.value || !scrollerRef.value.$el) return;
+  const scrollableView = scrollerRef.value.$el; // DynamicScroller 的根滚动元素
+  const headingElements = scrollableView.querySelectorAll('h2[id], h3[id]'); // 在滚动器内部查找
   const newHeadings = [];
-  headingElements.forEach(e1 => {
+  const scrollContainerTop = scrollableView.getBoundingClientRect().top;
+
+  headingElements.forEach(el => {
     newHeadings.push({
-      id: e1.id,
-      top: e1.offsetTop,
+      id: el.id,
+      // 正确计算相对于滚动容器顶部的 offsetTop
+      top: el.getBoundingClientRect().top - scrollContainerTop + scrollableView.scrollTop
     });
   });
   headingsInView.value = newHeadings.sort((a, b) => a.top - b.top);
-}
+  // console.log('Collected headings for scrollspy:', headingsInView.value);
+};
 
 const setupWorker = () => {
   if (props.useWorker && window.Worker) {
-    // 确保 Worker 路径正确。如果 public/markdown.worker.js 存在:
     markdownWorker = new Worker('/markdown.worker.js', { type: 'module' });
 
     markdownWorker.onmessage = (e) => {
       const { type, blocks, html, originalId, message } = e.data;
 
-      if (type === 'blocks_splitted') {
-        // 预填充 HTML，这样 DynamicScrollerItem 可以立即渲染一些东西
+      if (type === 'blocks_splitted_from_worker') { // 假设 worker 返回分割好的块
         rawBlocks.value = blocks.map(b => ({ ...b, html: '<p>正在解析块...</p>' }));
         isLoading.value = false;
-        // 逐个请求解析每个块
         rawBlocks.value.forEach(block => {
           if (markdownWorker) {
-            markdownWorker.postMessage({ type: 'parse_block', markdownBlock: block });
+            // 向 worker 请求解析单个块时，也传递 basePath
+            markdownWorker.postMessage({
+              type: 'parse_block_from_worker',
+              markdownBlock: { id: block.id, markdown: block.markdown, containedHeadingIds: block.containedHeadingIds }, // 传递整个块信息
+              basePath: props.basePath // <--- 传递 basePath
+            });
           }
         });
-      } else if (type === 'block_parsed' && originalId) {
+      } else if (type === 'block_parsed_from_worker' && originalId) {
         const blockIndex = rawBlocks.value.findIndex(b => b.id === originalId);
         if (blockIndex !== -1) {
-          // 对于 Vue 3 ref 数组，直接修改或使用 splice 是响应式的
-          rawBlocks.value[blockIndex] = { ...rawBlocks.value[blockIndex], html };
+          rawBlocks.value[blockIndex].html = html;
         }
-      } else if (type === 'error') {
-        console.error('Markdown Worker 错误:', message);
-        const blockIndex = rawBlocks.value.findIndex(b => b.id === originalId);
-        if (blockIndex !== -1) {
-           rawBlocks.value[blockIndex].html = `<p style="color: red;">解析块失败: ${message}</p>`;
+      } else if (type === 'error_from_worker') {
+        console.error('Markdown Worker 错误:', message, originalId);
+        if (originalId) {
+            const blockIndex = rawBlocks.value.findIndex(b => b.id === originalId);
+            if (blockIndex !== -1) {
+                rawBlocks.value[blockIndex].html = `<p style="color: red;">解析块失败: ${message}</p>`;
+            }
         }
-        // 可以选择在这里对特定块或全局进行降级处理
       } else if (type === 'worker_ready') {
         console.log('Markdown Worker 已准备好。');
-        // Worker 准备好后，如果 markdownText 已有值，则触发处理
         if (props.markdownText) {
-          markdownWorker.postMessage({ type: 'split_text', markdownText: props.markdownText });
+          // 当 worker 准备好时，发送整个文本进行分割和初步处理
+          markdownWorker.postMessage({
+            type: 'split_text_in_worker', // Worker 需要处理这个消息类型
+            markdownText: props.markdownText,
+            basePath: props.basePath // <--- 传递 basePath
+          });
         }
       }
     };
@@ -119,70 +134,80 @@ const setupWorker = () => {
     markdownWorker.onerror = (e) => {
       console.error('初始化 Markdown Worker 时发生错误:', e.message);
       isLoading.value = false;
-      // 如果 Worker 失败，则回退到主线程处理
-      processMarkdownWithoutWorker(props.markdownText);
-      if (markdownWorker) {
-        markdownWorker.terminate(); // 确保终止失败的 worker
-      }
-      markdownWorker = null; // 禁用 Worker
+      processMarkdownWithoutWorker(props.markdownText, props.basePath); // 传递 basePath
+      if (markdownWorker) markdownWorker.terminate();
+      markdownWorker = null;
     };
   } else {
-    // Worker 不可用或未启用，立即在主线程处理
-    processMarkdownWithoutWorker(props.markdownText);
+    // 如果不使用 Worker 或浏览器不支持，立即在主线程处理
+    // watch 的 immediate:true 应该会处理初始加载，这里作为后备
+    if(props.markdownText && rawBlocks.value.length === 0 && !isLoading.value) {
+        processMarkdownWithoutWorker(props.markdownText, props.basePath);
+    } else if (!props.markdownText) {
+        isLoading.value = false; // 如果没文本，也不在加载状态
+    }
   }
 };
 
-// 不使用 Worker 或 Worker 失败时的处理逻辑
-const processMarkdownWithoutWorker = (text) => {
-  console.log("在主线程处理 Markdown。");
+const processMarkdownWithoutWorker = (text, currentBasePath) => {
+  // console.log("在主线程处理 Markdown, basePath:", currentBasePath);
   isLoading.value = true;
+  // 1. 分割块 (splitMarkdownIntoBlocks 不需要 basePath，因为它只提取 ID 和原始 markdown)
   const splittedBlocks = splitMarkdownIntoBlocks(text);
+
+  // 2. 为每个块渲染 HTML (parseMarkdown 需要 basePath 来处理相对路径)
   rawBlocks.value = splittedBlocks.map(block => ({
     ...block,
-    html: parseMarkdown(block.markdown) // 使用 markdownParser.js 中的 parseMarkdown
+    html: parseMarkdown(block.markdown, currentBasePath) // <--- 使用导入的 parseMarkdown 并传递 basePath
   }));
   isLoading.value = false;
+  // DOM 更新后收集标题
+  nextTick().then(collectHeadings);
 };
 
-// computed 属性，确保 DynamicScroller 总是拿到最新的块列表
+// computed 属性现在很简单，因为 HTML 是在 rawBlocks 中直接更新的
 const processedBlocks = computed(() => rawBlocks.value);
 
-watch(() => props.markdownText, async(newText, oldText) => {
-  if (newText === oldText && !isLoading.value) return; // 避免不必要的重复处理
-  if(!isLoading.value){
-    await nextTick(); // 确保 DOM 更新完成
-    await nextTick();
-    collectHeadings(); // 收集当前视图中的标题
+
+watch(() => [props.markdownText, props.basePath], async ([newText, newBasePath], [oldText, oldBasePath]) => {
+  // 避免不必要的重复处理，除非文本或基础路径实际改变
+  if (newText === oldText && newBasePath === oldBasePath && !isLoading.value && rawBlocks.value.length > 0) {
+    // console.log("MarkdownRenderer: Text and basePath unchanged, skipping re-processing.");
+    return;
   }
 
   if (!newText) {
     rawBlocks.value = [];
     isLoading.value = false;
+    headingsInView.value = []; // 清空标题
     return;
   }
 
+  console.log(`MarkdownRenderer: Processing new text or basePath. UseWorker: ${props.useWorker}, Worker available: ${!!markdownWorker}`);
   isLoading.value = true;
   if (props.useWorker && markdownWorker) {
-    markdownWorker.postMessage({ type: 'split_text', markdownText: newText });
-  } else if (props.useWorker && !markdownWorker && window.Worker) {
-    // Worker 尚未初始化，调用 setupWorker
-    // setupWorker 内部会在 Worker 准备好后发送消息 (如果 markdownText 有值)
-    // 或者在 onMounted 中已调用 setupWorker
-    console.log("Worker 正在设置中，稍后将处理文本。");
+    // 告诉 worker 处理新的文本和 basePath
+    markdownWorker.postMessage({
+      type: 'split_text_in_worker', // Worker 需要处理这个消息类型
+      markdownText: newText,
+      basePath: newBasePath // <--- 传递 basePath
+    });
+  } else if (props.useWorker && !markdownWorker && typeof window !== 'undefined' && window.Worker) {
+    // Worker 尚未初始化 (可能在 onMounted 中会初始化)
+    // onMounted 中的 setupWorker 会在 worker_ready 后发送初始文本
+    console.log("MarkdownRenderer: Worker is being set up or not ready, text processing deferred.");
   } else {
     // Worker 未启用或不可用
-    processMarkdownWithoutWorker(newText);
+    processMarkdownWithoutWorker(newText, newBasePath);
   }
-}, { immediate: true }); // immediate: true 确保初始加载时执行
+}, { immediate: true, deep: true }); // immediate 确保初始加载, deep 对 basePath (如果是对象)
 
 let lastActiveHeadingId = null;
-// (4) Scroll event handler for the scrollable container
 const handleScroll = (event) => {
   if (!headingsInView.value.length || !event.target) return;
-
   const scrollPosition = event.target.scrollTop;
   let currentActiveId = null;
-  const threshold = 60; // Adjust as needed
+  const threshold = parseInt(event.target.offsetHeight * 0.2) || 60; // 视口高度的20%或60px
 
   for (let i = headingsInView.value.length - 1; i >= 0; i--) {
     const heading = headingsInView.value[i];
@@ -191,13 +216,9 @@ const handleScroll = (event) => {
       break;
     }
   }
-
-  // If scrolled to top and no heading is past threshold, activate first if visible
   if (currentActiveId === null && headingsInView.value.length > 0 && scrollPosition < headingsInView.value[0].top) {
-     // Optionally, don't activate any, or activate the first.
-     currentActiveId = headingsInView.value[0].id;
+     // currentActiveId = headingsInView.value[0].id; // 可选：激活第一个
   }
-
 
   if (currentActiveId !== lastActiveHeadingId) {
     emit('active-heading-changed', currentActiveId);
@@ -205,41 +226,104 @@ const handleScroll = (event) => {
   }
 };
 
-onMounted(() => {
-  if (props.useWorker && window.Worker && !markdownWorker) {
-    setupWorker(); // 初始化 Worker
-  } else if (!props.useWorker || !window.Worker) {
-    // 如果不使用 worker 或 worker 不支持，则立即处理（watch 的 immediate 应该已经处理了）
-    // 但以防万一，如果初始 markdownText 有值且未处理，这里可以再触发一次
-    if (props.markdownText && rawBlocks.value.length === 0) {
-        processMarkdownWithoutWorker(props.markdownText);
+// 用于父组件调用的滚动方法
+const scrollToHeading = async (headingId) => {
+  if (!scrollerRef.value || !processedBlocks.value || processedBlocks.value.length === 0) {
+    console.warn('Scroller or blocks not ready for scrolling to heading.');
+    return;
+  }
+  let targetBlockIndex = -1;
+  for (let i = 0; i < processedBlocks.value.length; i++) {
+    const block = processedBlocks.value[i];
+    if (block.containedHeadingIds && block.containedHeadingIds.includes(headingId)) {
+      targetBlockIndex = i;
+      break;
     }
   }
 
-  // 动态加载 highlight.js 样式 (如果还没有)
-  const hljsStyledId = 'hljs-styles'; // 确保 ID 唯一
-  if (!document.getElementById(hljsStyledId)) {
+  if (targetBlockIndex !== -1) {
+    scrollerRef.value.scrollToItem(targetBlockIndex); // 滚动到包含标题的块
+    await nextTick(); // 等待虚拟滚动器渲染完成
+    await nextTick(); // 再等一下确保DOM元素就位
+    const scrollableView = scrollerRef.value.$el;
+    if (scrollableView) {
+        const headingElement = scrollableView.querySelector(`#${CSS.escape(headingId)}`);
+        if (headingElement) {
+            // 计算元素相对于滚动容器的精确位置并滚动
+            const scrollContainerTop = scrollableView.getBoundingClientRect().top;
+            const elementTopInScroller = headingElement.getBoundingClientRect().top - scrollContainerTop;
+            // 减去一个偏移量，使标题不要顶在最上面
+            const offset = 20; // px
+            scrollableView.scrollTop = scrollableView.scrollTop + elementTopInScroller - offset;
+        } else {
+            console.warn(`Heading element with ID '${headingId}' not found in DOM after scrolling to block.`);
+        }
+    }
+  } else {
+    console.warn(`Block containing heading ID '${headingId}' not found.`);
+  }
+};
+
+defineExpose({ scrollToHeading }); // 暴露给父组件
+
+onMounted(() => {
+  if (props.useWorker && typeof window !== 'undefined' && window.Worker && !markdownWorker) {
+    setupWorker();
+  } else if (!props.useWorker || (typeof window !== 'undefined' && !window.Worker)) {
+    // 如果 watch 的 immediate:true 没有因为某些原因在 markdownText 初始有值时触发处理
+    if (props.markdownText && rawBlocks.value.length === 0 && !isLoading.value) {
+        console.log("onMounted: Triggering initial main thread processing.");
+        processMarkdownWithoutWorker(props.markdownText, props.basePath);
+    } else if (!props.markdownText) {
+        isLoading.value = false;
+    }
+  }
+
+  const hljsStyledId = 'hljs-styles';
+  if (typeof document !== 'undefined' && !document.getElementById(hljsStyledId)) {
     const link = document.createElement('link');
     link.id = hljsStyledId;
     link.rel = 'stylesheet';
-    // 你可以选择一个 highlight.js 主题
-    link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'; // 例如 github-dark 主题
+    link.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css';
     document.head.appendChild(link);
   }
-  if (containerRef.value) { // Assuming containerRef is the scrollable element
-    containerRef.value.addEventListener('scroll', handleScroll, { passive: true });
+
+  // 监听 scrollerRef.value.$el 的滚动事件，而不是 containerRef
+  // 因为 DynamicScroller 内部有自己的滚动机制
+  if (scrollerRef.value && scrollerRef.value.$el) {
+    scrollerRef.value.$el.addEventListener('scroll', handleScroll, { passive: true });
+  } else {
+      // 如果 scrollerRef.$el 还没准备好，稍后尝试（或在 onUpdated 中）
+      // 但通常 onMounted 时 ref 应该可用了
+      watch(scrollerRef, (newScrollerRef) => {
+          if (newScrollerRef && newScrollerRef.$el) {
+              newScrollerRef.$el.removeEventListener('scroll', handleScroll); // 先移除旧的，以防万一
+              newScrollerRef.$el.addEventListener('scroll', handleScroll, { passive: true });
+          }
+      });
   }
 });
+
+// 当组件更新后，如果 DOM 结构变化导致标题位置改变，重新收集
+onUpdated(() => {
+    // collectHeadings 可能会频繁调用，考虑防抖或仅在特定条件下调用
+    // 例如，仅在 rawBlocks.value 变化后，且不是由于 html 更新导致的小变化
+    // 简单起见，每次更新后都收集，但对于大型文档要注意性能
+    // console.log("onUpdated triggered, re-collecting headings.");
+    // nextTick(collectHeadings); // 确保 DOM 已经更新完毕
+});
+
 
 onBeforeUnmount(() => {
   if (markdownWorker) {
     markdownWorker.terminate();
     markdownWorker = null;
   }
-  if (containerRef.value) {
-    containerRef.value.removeEventListener('scroll', handleScroll);
+  if (scrollerRef.value && scrollerRef.value.$el) { // 从 scroller 卸载事件
+    scrollerRef.value.$el.removeEventListener('scroll', handleScroll);
   }
 });
+
 </script>
 
 <style lang="scss"> /* 使用 lang="scss" 需要安装 sass-loader 和 sass */

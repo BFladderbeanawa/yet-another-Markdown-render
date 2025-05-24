@@ -17,6 +17,7 @@
       <MarkdownRenderer
         v-if="activeFileContent !== null"
         :markdown-text="activeFileContent"
+        :base-path="activeFileDir"
         :use-worker="false"
         @active-heading-changed="handleActiveHeadingChanged"
         ref="markdownRendererRef"
@@ -47,6 +48,8 @@ const markdownRendererRef = ref(null); // 引用 MarkdownRenderer 组件
 
 const mdItForHeadings = new MarkdownIt(); // 单独用于提取标题的实例
 
+const activeFileDir = ref('');
+
 function handleActiveHeadingChanged(headingId) {
   activeScrolledHeadingId.value = headingId;
 }
@@ -76,6 +79,13 @@ async function fetchAndPrepareMarkdown(filePath) {
     }
     const markdown = await response.text();
     activeFileContent.value = markdown; // 更新内容，触发 MarkdownRenderer
+    const lastSlash = filePath.lastIndexOf('/');
+    if (lastSlash !== -1) {
+      activeFileDir.value = filePath.substring(0, lastSlash + 1); // "docs/BlockUpdate/"
+    } else {
+      activeFileDir.value = ''; // 如果文件在 docs/ 根目录下
+    }
+    console.log("Active file directory for relative paths:", activeFileDir.value);
 
     // 解析 H2/H3 标题 (使用 markdown-it)
     const tokens = mdItForHeadings.parse(markdown, {});

@@ -1,13 +1,12 @@
 import MarkdownIt from "markdown-it";
-import { escapeHtml } from "markdown-it/lib/common/utils.mjs";
 
 try{
     if(typeof MarkdownIt === 'undefined'){
-        importScripts('https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js');
+        importScripts('https://fastly.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js');
     }
 } catch(e){
     console.error('Error loading MarkdownIt in worker:', e);
-    self.postMessage({type: 'error', message: 'Failed to load MarkdownIt'});
+    self.postMessage({type: 'error_from_worker', message: 'Failed to load MarkdownIt'});
 }
 try {
   if (typeof hljs === 'undefined') {
@@ -51,17 +50,23 @@ if(typeof MarkdownIt !== 'undefined'){
         }
     };
 }
+// 在初始化完成后发送准备就绪消息
+self.postMessage({ type: 'worker_ready' });
+
 self.onmessage = function (e) {
-    const {id,markdownBlock,markdownText,type} = e.data;
-    if (type === 'parse_block' && markdownBlock){
+    const {id, markdownBlock, markdownText, type, basePath} = e.data;
+    // 处理从MarkdownRenderer发送的parse_block_from_worker消息
+    if ((type === 'parse_block' || type === 'parse_block_from_worker') && markdownBlock){
         try{
-            const html = md.render(markdownBlock||' ');
-            self.postMessage({id, html,originalId:markdownBlock.id,type:'block_parsed'});
+            // 确保正确获取markdown文本
+            const markdownText = markdownBlock.markdown || ' ';
+            const html = md.render(markdownText);
+            self.postMessage({id, html, originalId:markdownBlock.id, type:'block_parsed_from_worker'});
         }catch (error) {
             console.error('Error rendering in worker for block:', error);
-            self.postMessage({id, html: `<p>Error rendering block: ${markdownBlock.id}</p>`, originalId:markdownBlock.id,type:'block_parsed'});
+            self.postMessage({id, html: `<p>Error rendering block: ${markdownBlock.id}</p>`, originalId:markdownBlock.id, type:'error_from_worker', message: error.message});
         }
-    }else if (type === 'split_text' && typeof markdownText === 'string') {
+    }else if ((type === 'split_text' || type === 'split_text_in_worker') && typeof markdownText === 'string') {
     try {
       const blocks = markdownText.split(/\n\s*(\n---|---\n)\s*\n|\n\n+/);
       const processedBlocks = blocks
@@ -70,10 +75,10 @@ self.onmessage = function (e) {
           id: `worker-block-${index}-${Date.now()}`,
           markdown: block.trim(),
         }));
-      self.postMessage({ type: 'blocks_splitted', blocks: processedBlocks });
+      self.postMessage({ type: 'blocks_splitted_from_worker', blocks: processedBlocks });
     } catch (error) {
       console.error('Error splitting markdown in worker:', error);
-      self.postMessage({ type: 'error', message: 'Failed to split markdown text' });
+      self.postMessage({ type: 'error_from_worker', message: 'Failed to split markdown text' });
     }
   }
 };

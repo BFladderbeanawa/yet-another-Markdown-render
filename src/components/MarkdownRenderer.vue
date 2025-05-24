@@ -281,7 +281,8 @@ const handleScroll = (event) => {
 // 用于父组件调用的滚动方法
 const scrollToHeading = async (headingId) => {
   if (!headingId) {
-    console.warn('No heading ID provided for scrolling.')
+    // 降级日志级别，减少控制台输出
+    // console.warn('No heading ID provided for scrolling.')
     return
   }
 
@@ -306,7 +307,8 @@ const scrollToHeading = async (headingId) => {
     !processedBlocks.value ||
     processedBlocks.value.length === 0
   ) {
-    console.warn('Scroller or blocks not ready for scrolling to heading.')
+    // 降级日志级别，减少控制台输出
+    // console.warn('Scroller or blocks not ready for scrolling to heading.')
     return
   }
 
@@ -340,7 +342,8 @@ const scrollToHeading = async (headingId) => {
 
     setTimeout(tryScrollToElement, 100)
   } else {
-    console.warn(`Block containing heading ID '${headingId}' not found.`)
+    // 降级日志级别，减少控制台输出
+    // console.warn(`Block containing heading ID '${headingId}' not found.`)
   }
 }
 

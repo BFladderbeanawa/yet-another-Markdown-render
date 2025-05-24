@@ -138,10 +138,6 @@ function handleSelectFile(filePath) {
 // 注意：这假设你的 MarkdownRenderer (或其内部的 markdown-it) 会为标题生成 ID
 // 并且这些 ID 与 slugify(text) 生成的一致。
 async function scrollToHeadingInMarkdownRenderer(headingId) {
-  console.log(
-    'App.vue: Attempting to scroll to heading ID in renderer:',
-    headingId
-  )
   if (typeof headingId === 'undefined' || headingId === null) {
     console.error(
       'App.vue: scrollToHeadingInMarkdownRenderer called with undefined or null headingId.'

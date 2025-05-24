@@ -101,7 +101,16 @@ const collectHeadings = () => {
 
 const setupWorker = () => {
   if (props.useWorker && window.Worker) {
-    markdownWorker = new Worker('/markdown.worker.js', { type: 'module' })
+    // 根据当前环境自动选择正确的Worker路径
+    let workerPath = './markdown.worker.js';
+    
+    // 在开发环境下，可能需要使用绝对路径
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      workerPath = '/markdown.worker.js';
+    }
+    
+    console.log('初始化Markdown Worker，路径:', workerPath);
+    markdownWorker = new Worker(workerPath, { type: 'module' })
 
     markdownWorker.onmessage = (e) => {
       const { type, blocks, html, originalId, message } = e.data

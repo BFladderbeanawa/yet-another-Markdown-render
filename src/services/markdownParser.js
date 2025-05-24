@@ -11,6 +11,7 @@ export function slugify(text) {
     s = String(text)
       .toLowerCase()
       .replace(/\s+/g, '-') // 替换空格为 -
+      .replace(/\./g, '-') // 替换点为 -
       .replace(/[^\w-]+/g, '') // 移除所有非单词字符 (保留字母、数字、下划线、连字符)
       .replace(/--+/g, '-') // 替换多个 - 为单个 -
       .replace(/^-+/, '') // 从文本开头移除 -
@@ -196,7 +197,7 @@ export function splitMarkdownIntoBlocks(markdownText) {
   if (!markdownText || typeof markdownText !== 'string') return []
 
   const rawContentBlocks = markdownText
-    .split(/\n\s*\n\s*\n+/)
+    .split(/(\n#{1}\s[^\n]+|\n\n\n+)/g)
     .map((blockText) => blockText.trim())
     .filter((blockText) => blockText.length > 0)
 

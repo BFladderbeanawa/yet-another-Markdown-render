@@ -1,165 +1,192 @@
 <template>
   <aside :class="['sidebar', { collapsed: isCollapsed }]">
+    <!-- 折叠按钮调整为更小，更靠边 -->
     <button
+      v-if="!isCollapsed"
       @click="$emit('toggle-collapse')"
       class="collapse-btn"
-      v-show="!isCollapsed"
-      title="折叠/展开侧边栏"
+      title="折叠侧边栏"
+      aria-label="折叠侧边栏"
     >
-      {{ isCollapsed ? '显示' : '隐藏' }}
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-left"><polyline points="15 18 9 12 15 6"></polyline></svg>
     </button>
+
     <div v-if="!isCollapsed" class="sidebar-content">
-      <div class="file-tree">
-        <h3 class="sidebar-title">文档导航</h3>
-        <!-- 如果 tree 是一个数组，直接遍历 -->
+      <div class="file-tree-section">
+        <h3 class="sidebar-section-title">文档导航</h3>
         <TreeItem
           v-for="topItem in tree"
           :key="topItem.path || topItem.name"
           :item="topItem"
           :active-file-path="activeFilePath"
           :depth="0"
+          :active-file-headings="activeFileHeadings"         
+          :active-scrolled-heading-id="activeScrolledHeadingId" 
           @select-file="(path) => $emit('select-file', path)"
+          @navigate-to-heading="navigateToHeading"        
         />
       </div>
-      <div
-        v-if="activeFilePath && activeFileHeadings.length > 0"
-        class="article-outline"
-      >
-        <h4>In this article:</h4>
-        <ul>
-          <li
-            v-for="heading in activeFileHeadings"
-            :key="heading.id"
-            :class="[
-              `heading-level-${heading.level}`,
-              { 'active-heading': heading.id === activeScrolledHeadingId } // (1) Add active class
-            ]"
-            @click="navigateToHeading(heading.id)"
-          >
-            {{ heading.text }}
-          </li>
-        </ul>
-      </div>
+      <!-- 移除固定的 article-toc-section，它现在会内嵌在 TreeItem 中 -->
+      <!--
+      <nav v-if="activeFilePath && activeFileHeadings.length > 0" class="article-toc-section">
+        ...
+      </nav>
+      -->
     </div>
   </aside>
 </template>
 
 <script setup>
-import TreeItem from './TreeItem.vue'
+import TreeItem from './TreeItem.vue';
 
 const props = defineProps({
-  tree: Array, // tree 是顶级项目的数组
+  tree: Array,
   activeFilePath: String,
   activeFileHeadings: Array,
   isCollapsed: Boolean,
   activeScrolledHeadingId: String
-})
+});
 
 const emit = defineEmits([
   'select-file',
   'toggle-collapse',
   'navigate-to-heading'
-])
+]);
 
-function navigateToHeading(headingId) {
-  emit('navigate-to-heading', headingId)
+function navigateToHeading(headingId) { // 这个函数现在由 TreeItem 内部的TOC触发，再emit给App
+  emit('navigate-to-heading', headingId);
 }
 </script>
 
-<style scoped>
+<style scoped lang="scss"> /* 使用 SCSS */
 .sidebar {
-  width: 280px;
-  background-color: #f6f8fa; /* GitHub-like sidebar background */
-  border-right: 1px solid #d0d7de; /* GitHub-like border */
-  padding: 0; /* 改为0，让 sidebar-content 控制内边距 */
+  width: 260px; /* 可以调整宽度 */
+  background-color: #f8f9fa; /* 更中性的浅灰色 */
+  border-right: 1px solid #dee2e6; /* 边框颜色 */
+  padding: 0; /* 由 sidebar-content 控制内边距 */
   overflow-y: auto;
-  transition:
-    width 0.3s ease,
-    padding 0.3s ease;
+  transition: width 0.25s ease-in-out;
   height: 100vh;
   box-sizing: border-box;
-  position: relative;
+  position: relative; /* 为了 collapse-btn 的定位 */
   display: flex;
   flex-direction: column;
-  flex-shrink: 0; /* 防止在 flex 布局中被压缩 */
+  flex-shrink: 0;
+  font-size: 14px; /* 基础字体大小 */
 }
 
 .sidebar.collapsed {
   width: 0;
-  padding: 0;
   overflow: hidden;
   border-right: none;
 }
 
 .sidebar-content {
-  padding: 20px 15px; /* 侧边栏内容的内边距 */
+  padding: 20px 0; /* 上下内边距，左右由各 section 控制 */
   flex-grow: 1;
-  overflow-y: auto; /* 如果内容过多，允许滚动 */
+  overflow-y: auto;
 }
 
 .collapse-btn {
-  display: block; /* 改为块级元素，方便定位和样式 */
-  background: #f6f8fa;
-  border: 1px solid #d0d7de;
-  color: #24292e;
-  padding: 8px 12px;
+  position: absolute;
+  top: 15px;
+  right: 0px; /* 按钮一半在侧边栏内，一半在外，更像 Docsify */
+  width: 24px;
+  height: 24px;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  text-align: center;
-  font-weight: 500;
-  margin: 10px auto; /* 居中 */
-  width: calc(100% - 30px); /* 按钮宽度 */
-  box-sizing: border-box;
-  border-radius: 6px;
-  transition: background-color 0.2s ease;
-}
-.collapse-btn:hover {
-  background-color: #e1e4e8;
-}
+  z-index: 10;
+  padding: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  color: #495057; // 图标颜色
 
+  &:hover {
+    background-color: #f1f3f5;
+    color: #007bff;
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+}
 .sidebar.collapsed .collapse-btn {
-  display: none; /* 折叠时，由 App.vue 中的按钮控制展开 */
+  display: none;
 }
 
-.sidebar-title {
-  font-size: 0.9em;
-  color: #57606a; /* GitHub muted color */
+.file-tree-section,
+.article-toc-section {
+  padding-left: 20px;  /* 统一左边距 */
+  padding-right: 15px; /* 右边距 */
+}
+
+.file-tree-section {
+  margin-bottom: 24px; /* 文件树和页内目录之间的间距 */
+}
+
+.sidebar-section-title { // 用于 "文档导航" 和 "本文内容"
+  font-size: 0.85em;    // 标题小一点
+  color: #6c757d;     // 柔和的灰色
   margin-top: 0;
   margin-bottom: 10px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  text-transform: uppercase; // 大写
+  letter-spacing: 0.5px;   // 轻微字间距
+  padding-left: 0; // 标题本身不额外缩进
 }
 
-.file-tree {
-  margin-bottom: 25px;
+.toc-list {
+  list-style-type: none;
+  padding-left: 0;
+  margin: 0;
 }
 
-.article-outline li {
-  padding: 4px 10px; /* Adjust padding */
+.toc-item {
+  display: block;
+  padding: 5px 0; // 上下内边距，左右缩进由层级 class 控制
+  margin-left: 5px; // 基础左外边距，用于创建第一级缩进感
+  font-size: 0.95em; // 页内目录字体比文件树稍小
+  color: #495057;   // 默认文字颜色
+  text-decoration: none;
+  border-radius: 3px;
   cursor: pointer;
-  color: #555; /* Default color */
-  font-size: 0.9em;
-  border-left: 2px solid transparent; /* For active indicator */
-  transition:
-    background-color 0.2s ease,
-    border-left-color 0.2s ease;
-}
-.article-outline li:hover {
-  color: #007bff;
-}
-.article-outline li.active-heading {
-  color: #007bff; /* Active text color */
-  font-weight: 600;
-  background-color: #e6f2ff; /* Light blue background for active */
-  border-left-color: #007bff; /* Active border color */
+  line-height: 1.5;
+  transition: color 0.15s ease, font-weight 0.15s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &:hover {
+    color: #007bff; // 悬停时文字颜色
+  }
+
+  &.active-heading {
+    color: #007bff;   // 激活项文字颜色
+    font-weight: 600; // 激活项加粗
+    // 可以考虑在这里添加一个细微的左边框，模仿某些文档站点的风格
+    // border-left: 2px solid #007bff;
+    // padding-left: calc(current-padding-left - 2px); // 如果加了border，调整padding
+  }
+
+  &.toc-level-2 {
+    // padding-left: 0; // 基础缩进由 margin-left 提供
+  }
+  &.toc-level-3 {
+    margin-left: 20px; // H3 进一步缩进 (相对于父级 ul/li)
+                      // 或者用 padding-left: 15px; （相对于 toc-level-2 的最终 padding）
+  }
+  &.toc-level-4 {
+    margin-left: 35px; // H4 再进一步缩进
+                      // 或者用 padding-left: 30px;
+  }
 }
 
-.article-outline .heading-level-3 {
-  padding-left: 25px; /* More indentation for H3 */
-}
-/* Add more specific styles for deeper levels if needed */
-.article-outline .heading-level-4 {
-  /* If you support H4 */
-  padding-left: 40px;
+.toc-text {
+  // 如果需要，可以包裹文本以应用特定样式，但通常直接在 .toc-item 上设置即可
 }
 </style>

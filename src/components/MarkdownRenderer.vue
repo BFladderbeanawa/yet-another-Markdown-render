@@ -553,7 +553,7 @@ onBeforeUnmount(() => {
     padding: 0.2em 0.4em;
     margin: 0;
     font-size: 85%;
-    //background-color: rgba(175, 184, 193, 0.2); // GitHub 内联代码背景
+    background-color: rgba(175, 184, 193, 0.2); // GitHub 内联代码背景
     border-radius: 6px; // GitHub 圆角
   }
 
@@ -569,7 +569,7 @@ onBeforeUnmount(() => {
     border-radius: 6px; // GitHub 圆角
     margin-bottom: 1em;
 
-    code.hljs {
+    code {
       // highlight.js 会给代码块内的 <code> 加上 hljs 类
       padding: 0;
       margin: 0;

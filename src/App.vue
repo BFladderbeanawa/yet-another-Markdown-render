@@ -200,6 +200,7 @@ onMounted(() => {
 /* 全局样式 */
 #app {
   padding: 0 0 0 0;
+  text-align: left;
 }
 
 body,

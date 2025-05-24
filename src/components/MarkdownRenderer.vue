@@ -157,7 +157,9 @@ const processedBlocks = computed(() => rawBlocks.value);
 
 watch(
   () => [props.markdownText, props.basePath],
-  async ([newText, newBasePath], [oldText, oldBasePath]) => {
+  async (newValues, oldValues) => {
+    const [newText, newBasePath] = newValues || [];
+    const [oldText, oldBasePath] = oldValues || [];
     // 避免不必要的重复处理，除非文本或基础路径实际改变
     if (newText === oldText && newBasePath === oldBasePath && !isLoading.value && rawBlocks.value.length > 0) {
       // console.log("MarkdownRenderer: Text and basePath unchanged, skipping re-processing.");
